@@ -1,7 +1,10 @@
 """
 Package based on the text book: Advances in Financial Machine Learning, by Marcos Lopez de Prado
 """
-
+import sys
+from pathlib import Path
+home = str(Path.home())
+sys.path.append(home + "/ProdigyAI/third_party_libraries/hudson_and_thames")
 
 # import mlfinlab.cross_validation as cross_validation
 # import mlfinlab.data_structures as data_structures

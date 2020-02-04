@@ -4,6 +4,10 @@ Logic regarding labeling from chapter 3. In particular the Triple Barrier Method
 
 import numpy as np
 import pandas as pd
+import sys
+from pathlib import Path
+home = str(Path.home())
+sys.path.append(home + "/ProdigyAI/third_party_libraries/hudson_and_thames")
 
 # Snippet 3.1, page 44, Daily Volatility Estimates
 from mlfinlab.util.multiprocess import mp_pandas_obj
@@ -46,17 +50,33 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
         stop_loss = pd.Series(index=events.index)  # NaNs
 
     # Get events
-    for loc, vertical_barrier in events_['t1'].fillna(close.index[-1]).iteritems():
-        closing_prices = close[loc: vertical_barrier]  # Path prices for a given trade
-        cum_returns = (closing_prices / close[loc] - 1) * events_.at[loc, 'side']  # Path returns
-        out.loc[loc, 'sl'] = cum_returns[cum_returns < stop_loss[loc]].index.min()  # Earliest stop loss date
-        out.loc[loc, 'pt'] = cum_returns[cum_returns > profit_taking[loc]].index.min()  # Earliest profit taking date
+    for loc, vertical_barrier in events_['t1'].fillna(
+            close.index[-1]).iteritems():
+        closing_prices = close[
+            loc:vertical_barrier]  # Path prices for a given trade
+        cum_returns = (closing_prices / close[loc] -
+                       1) * events_.at[loc, 'side']  # Path returns
+        out.loc[loc,
+                'sl'] = cum_returns[cum_returns < stop_loss[loc]].index.min(
+                )  # Earliest stop loss date
+        out.loc[loc, 'pt'] = cum_returns[
+            cum_returns > profit_taking[loc]].index.min(
+            )  # Earliest profit taking date
+
+    out['t1'] = out['t1'].dt.round('ms')
+    out['pt'] = out['pt'].dt.round('ms')
+    out['pt'] = out['sl'].dt.round('ms')
 
     return out
 
 
 # Snippet 3.4 page 49, Adding a Vertical Barrier
-def add_vertical_barrier(t_events, close, num_days=0, num_hours=0, num_minutes=0, num_seconds=0):
+def add_vertical_barrier(t_events,
+                         close,
+                         num_days=0,
+                         num_hours=0,
+                         num_minutes=0,
+                         num_seconds=0):
     """
     Snippet 3.4 page 49, Adding a Vertical Barrier
 
@@ -74,7 +94,8 @@ def add_vertical_barrier(t_events, close, num_days=0, num_hours=0, num_minutes=0
     :return: (series) timestamps of vertical barriers
     """
     timedelta = pd.Timedelta(
-        '{} days, {} hours, {} minutes, {} seconds'.format(num_days, num_hours, num_minutes, num_seconds))
+        '{} days, {} hours, {} minutes, {} seconds'.format(
+            num_days, num_hours, num_minutes, num_seconds))
     # Find index to closest to vertical barrier
     nearest_index = close.index.searchsorted(t_events + timedelta)
 
@@ -85,12 +106,19 @@ def add_vertical_barrier(t_events, close, num_days=0, num_hours=0, num_minutes=0
     nearest_timestamp = close.index[nearest_index]
     filtered_events = t_events[:nearest_index.shape[0]]
 
-    vertical_barriers = pd.Series(data=nearest_timestamp, index=filtered_events)
+    vertical_barriers = pd.Series(data=nearest_timestamp,
+                                  index=filtered_events)
     return vertical_barriers
 
 
 # Snippet 3.3 -> 3.6 page 50, Getting the Time of the First Touch, with Meta Labels
-def get_events(close, t_events, pt_sl, target, min_ret, num_threads, vertical_barrier_times=False,
+def get_events(close,
+               t_events,
+               pt_sl,
+               target,
+               min_ret,
+               num_threads,
+               vertical_barrier_times=False,
                side_prediction=None):
     """
     Snippet 3.6 page 50, Getting the Time of the First Touch, with Meta Labels
@@ -122,7 +150,7 @@ def get_events(close, t_events, pt_sl, target, min_ret, num_threads, vertical_ba
 
     # 1) Get target
     target = target.loc[t_events]
-    target = target[target > min_ret]  # min_ret
+    # target = target[target > min_ret]  # min_ret
 
     # 2) Get vertical barrier (max holding period)
     if vertical_barrier_times is False:
@@ -133,11 +161,17 @@ def get_events(close, t_events, pt_sl, target, min_ret, num_threads, vertical_ba
         side_ = pd.Series(1.0, index=target.index)
         pt_sl_ = [pt_sl[0], pt_sl[0]]
     else:
-        side_ = side_prediction.loc[target.index]  # Subset side_prediction on target index.
+        side_ = side_prediction.loc[
+            target.index]  # Subset side_prediction on target index.
         pt_sl_ = pt_sl[:2]
 
     # Create a new df with [v_barrier, target, side] and drop rows that are NA in target
-    events = pd.concat({'t1': vertical_barrier_times, 'trgt': target, 'side': side_}, axis=1)
+    events = pd.concat(
+        {
+            't1': vertical_barrier_times,
+            'trgt': target,
+            'side': side_
+        }, axis=1)
     events = events.dropna(subset=['trgt'])
 
     # Apply Triple Barrier
@@ -224,13 +258,15 @@ def get_bins(triple_barrier_events, close):
 
     # 1) Align prices with their respective events
     events_ = triple_barrier_events.dropna(subset=['t1'])
-    all_dates = events_.index.union(other=events_['t1'].array).drop_duplicates()
+    all_dates = events_.index.union(
+        other=events_['t1'].array).drop_duplicates()
     prices = close.reindex(all_dates, method='bfill')
 
     # 2) Create out DataFrame
     out_df = pd.DataFrame(index=events_.index)
     # Need to take the log returns, else your results will be skewed for short positions
-    out_df['ret'] = np.log(prices.loc[events_['t1'].array].array) - np.log(prices.loc[events_.index])
+    out_df['ret'] = np.log(prices.loc[events_['t1'].array].array) - np.log(
+        prices.loc[events_.index])
     out_df['trgt'] = events_['trgt']
 
     # Meta labeling: Events that were correct will have pos returns
