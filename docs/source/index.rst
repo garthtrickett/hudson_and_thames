@@ -55,7 +55,8 @@ Platinum Sponsor:
 
 Gold Sponsors:
 **************
-* `Dr. Ernest P. Chan`_
+* `E.P. Chan & Associates`_
+* `Markov Capital`_
 
 Supporter Sponsors:
 *******************
@@ -64,8 +65,9 @@ Supporter Sponsors:
 * `Zack Gow`_
 * `Jack Yu`_
 
-.. _`Machine Factor Technologies`: https://www.linkedin.com/in/proskurinolexandr/
-.. _`Dr. Ernest P. Chan`: https://www.epchan.com/
+.. _`Machine Factor Technologies`: https://machinefactor.tech/
+.. _`E.P. Chan & Associates`: https://www.epchan.com/
+.. _`Markov Capital`: http://www.markovcapital.se/
 .. _`John B. Keown`: https://www.linkedin.com/in/john-keown-quantitative-finance-big-data-ml/
 .. _`Roberto Spadim`: https://www.linkedin.com/in/roberto-spadim/
 .. _`Zack Gow`: https://www.linkedin.com/in/zackgow/
@@ -117,6 +119,7 @@ Implementations
    implementations/structural_breaks
    implementations/microstructural_features
    implementations/clustering
+   implementations/codependence
 
 
 
@@ -133,6 +136,7 @@ Implementations
 * :doc:`implementations/structural_breaks`
 * :doc:`implementations/microstructural_features`
 * :doc:`implementations/clustering`
+* :doc:`implementations/codependence`
 
 Additional Information
 ######################
