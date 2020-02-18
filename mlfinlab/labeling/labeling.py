@@ -50,6 +50,10 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
     else:
         stop_loss = pd.Series(index=events.index)  # NaNs
 
+    import pdb
+
+    pdb.set_trace()
+
     # Get events
     for loc, vertical_barrier in events_["t1"].fillna(close.index[-1]).iteritems():
         closing_prices = close[loc:vertical_barrier]  # Path prices for a given trade
