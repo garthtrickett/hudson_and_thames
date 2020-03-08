@@ -32,6 +32,7 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
     :return: DataFrame of timestamps of when first barrier was touched
     """
     # Apply stop loss/profit taking, if it takes place before t1 (end of event)
+
     events_ = events.loc[molecule]
     out = events_[["t1"]].copy(deep=True)
 
@@ -49,10 +50,6 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
         stop_loss = -stop_loss_multiple * events_["trgt"]
     else:
         stop_loss = pd.Series(index=events.index)  # NaNs
-
-    import pdb
-
-    pdb.set_trace()
 
     # Get events
     for loc, vertical_barrier in events_["t1"].fillna(close.index[-1]).iteritems():
