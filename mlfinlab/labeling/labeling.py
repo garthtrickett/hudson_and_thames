@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import sys
 from pathlib import Path
+from numba import njit, prange
 
 home = str(Path.home())
 sys.path.append(home + "/ProdigyAI/third_party_libraries/hudson_and_thames")
@@ -183,8 +184,40 @@ def get_events(
         pt_sl=pt_sl_,
     )
 
-    for ind in events.index:
-        events.loc[ind, "t1"] = first_touch_dates.loc[ind, :].dropna().min()
+    events_index_as_epoch = np.asarray(events.index.astype(np.int64))
+    events_t1 = events.reindex(events.t1)
+    events_t1_as_epoch = np.asarray(events_t1.index.astype(np.int64))
+
+    first_touch_dates_index_as_epoch = np.asarray(
+        first_touch_dates.index.astype(np.int64)
+    )
+    first_touch_dates_t1 = first_touch_dates.reindex(first_touch_dates.t1)
+    first_touch_dates_t1_as_epoch = np.asarray(
+        first_touch_dates_t1.index.astype(np.int64)
+    )
+
+    first_touch_dates_pt = first_touch_dates.reindex(first_touch_dates.pt)
+    first_touch_dates_pt_as_epoch = np.asarray(
+        first_touch_dates_pt.index.astype(np.int64)
+    )
+
+    first_touch_dates_sl = first_touch_dates.reindex(first_touch_dates.sl)
+    first_touch_dates_sl_as_epoch = np.asarray(
+        first_touch_dates_sl.index.astype(np.int64)
+    )
+
+    events_t1_epoch_from_first_touch_dates = fill_events_t1_with_first_touches(
+        events_index_as_epoch,
+        first_touch_dates_index_as_epoch,
+        events_t1_as_epoch,
+        first_touch_dates_t1_as_epoch,
+        first_touch_dates_pt_as_epoch,
+        first_touch_dates_sl_as_epoch,
+    )
+
+    # for ind in events.index:
+    #     # find the index  where index == ind then update t1
+    #     events.loc[ind, "t1"] = first_touch_dates.loc[ind, :].dropna().min()
 
     if side_prediction is None:
         events = events.drop("side", axis=1)
@@ -193,7 +226,68 @@ def get_events(
     events["pt"] = pt_sl[0]
     events["sl"] = pt_sl[1]
 
+    events.t1 = pd.to_datetime(events_t1_epoch_from_first_touch_dates)
+
     return events
+
+
+@njit(parallel=True)
+def fill_events_t1_with_first_touches(
+    events_index_as_epoch,
+    first_touch_dates_index_as_epoch,
+    events_t1_as_epoch,
+    first_touch_dates_t1_as_epoch,
+    first_touch_dates_pt_as_epoch,
+    first_touch_dates_sl_as_epoch,
+):
+    for i in prange(len(events_index_as_epoch)):
+        for j in prange(len(first_touch_dates_index_as_epoch)):
+            if events_index_as_epoch[i] >= first_touch_dates_index_as_epoch[j]:
+
+                if (
+                    first_touch_dates_pt_as_epoch[j] < 0
+                    and first_touch_dates_sl_as_epoch[j] < 0
+                ):
+                    events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[j]
+                elif (
+                    first_touch_dates_pt_as_epoch[j] > 0
+                    and first_touch_dates_sl_as_epoch[j] > 0
+                ):
+                    if (
+                        first_touch_dates_pt_as_epoch[j]
+                        < first_touch_dates_sl_as_epoch[j]
+                    ):
+                        events_t1_as_epoch[i] = first_touch_dates_pt_as_epoch[j]
+                    elif (
+                        first_touch_dates_pt_as_epoch[j]
+                        > first_touch_dates_sl_as_epoch[j]
+                    ):
+                        events_t1_as_epoch[i] = first_touch_dates_sl_as_epoch[j]
+
+                elif (
+                    first_touch_dates_pt_as_epoch[j] < 0
+                    and first_touch_dates_sl_as_epoch[j] > 0
+                ):
+                    if (
+                        first_touch_dates_sl_as_epoch[j]
+                        < first_touch_dates_t1_as_epoch[j]
+                    ):
+                        events_t1_as_epoch[i] = first_touch_dates_sl_as_epoch[j]
+                    else:
+                        events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[j]
+                elif (
+                    first_touch_dates_pt_as_epoch[j] > 0
+                    and first_touch_dates_sl_as_epoch[j] < 0
+                ):
+                    if (
+                        first_touch_dates_pt_as_epoch[j]
+                        < first_touch_dates_t1_as_epoch[j]
+                    ):
+                        events_t1_as_epoch[i] = first_touch_dates_pt_as_epoch[j]
+                    else:
+                        events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[j]
+
+    return events_t1_as_epoch
 
 
 # Snippet 3.9, pg 55, Question 3.3
