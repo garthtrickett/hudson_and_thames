@@ -1,13 +1,22 @@
 .. _additional_information-contact:
 
-=======
-Contact
-=======
+======================
+Join the Slack Channel
+======================
 
-At the moment the project is still rather small and thus I would recommend getting in touch with us over email so that we can further discuss the areas of contribution that interest you the most. We have a slack channel where we all communicate.
+We host a booming community of like minded data scientists and quants, join the Slack channel now! Open to
+`sponsors <https://www.patreon.com/HudsonThames>`_ of our package.
 
-For now you can get hold us at: research@hudsonthames.org
+The channel has the following benefits:
+
+* Community of like minded individuals.
+* Ask questions about the package implementations and get community feedback.
+* Occasional presentations on topics within financial machine learning.
+* A papers channel where we share the papers which are freely available.
+* Access to members of our research group.
 
 Looking forward to hearing from you!
 
-.. _email: research@hudsonthames.org
+.. image:: ./images/slack.png
+   :scale: 65 %
+   :align: center

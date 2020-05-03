@@ -21,10 +21,11 @@ from mlfinlab.util.multiprocess import mp_pandas_obj
 
 
 @njit  # prange i loop ?
-def get_events_subloop_numba(events_t1_index_as_epoch, close_np_array,
-                             close_index_as_epoch, out_epoch_index,
-                             side_np_array, stop_loss_np_array,
-                             profit_taking_np_array, out_sl, out_pt):
+def get_events_subloop_numba(events_t1_index_as_epoch, events_t1_as_epoch,
+                             close_np_array, close_index_as_epoch,
+                             out_epoch_index, side_np_array,
+                             stop_loss_np_array, profit_taking_np_array,
+                             out_sl, out_pt):
     for i in range(len(events_t1_index_as_epoch)):
         path_prices_for_given_trade = np.zeros(len(close_np_array))
         path_prices_for_given_trade[:] = np.nan
@@ -138,9 +139,9 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
     # print("starting subloop in apply_pt_sl")
 
     out_sl, out_pt = get_events_subloop_numba(
-        events_t1_index_as_epoch, close_np_array, close_index_as_epoch,
-        out_epoch_index, side_np_array, stop_loss_np_array,
-        profit_taking_np_array, out_sl, out_pt)
+        events_t1_index_as_epoch, events_t1_as_epoch, close_np_array,
+        close_index_as_epoch, out_epoch_index, side_np_array,
+        stop_loss_np_array, profit_taking_np_array, out_sl, out_pt)
 
     numba_out["sl"] = pd.to_datetime(out_sl, unit="ms")
     numba_out["pt"] = pd.to_datetime(out_pt, unit="ms")
@@ -163,7 +164,6 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
     end_time = time.time()
 
     print("finished subloop in apply_pt_sl" + str(end_time - start_time))
-
 
     return numba_out
 
@@ -248,8 +248,8 @@ def get_events(close,
     """
 
     # 1) Get target
-    target = target.loc[t_events]
-    # target = target[target > min_ret]  # min_ret
+    target = target.reindex(t_events)
+    # target = target[target > min_ret]  # min_ret ### this isnt commented out in the original repo
 
     # 2) Get vertical barrier (max holding period)
     if vertical_barrier_times is False:
@@ -260,8 +260,8 @@ def get_events(close,
         side_ = pd.Series(1.0, index=target.index)
         pt_sl_ = [pt_sl[0], pt_sl[0]]
     else:
-        side_ = side_prediction.loc[
-            target.index]  # Subset side_prediction on target index.
+        side_ = side_prediction.reindex(
+            target.index)  # Subset side_prediction on target index.
         pt_sl_ = pt_sl[:2]
 
     # Create a new df with [v_barrier, target, side] and drop rows that are NA in target
@@ -372,8 +372,8 @@ def get_events(close,
     print("fill_events_t1_with_first_touches numba finished" +
           str(end_time - start_time))
 
-    import pdb
-    pdb.set_trace()
+    # import pdb
+    # pdb.set_trace()
 
     # for ind in events.index:
     #     # find the index  where index == ind then update t1
@@ -459,8 +459,10 @@ def barrier_touched(out_df, events):
         ret = values["ret"]
         target = values["trgt"]
 
-        pt_level_reached = ret > target * events.loc[date_time, "pt"]
-        sl_level_reached = ret < -target * events.loc[date_time, "sl"]
+        pt_level_reached = ret > np.log(1 + target) * events.loc[date_time,
+                                                                 'pt']
+        sl_level_reached = ret < -np.log(1 + target) * events.loc[date_time,
+                                                                  'sl']
 
         if ret > 0.0 and pt_level_reached:
             # Top barrier reached
@@ -543,10 +545,9 @@ def drop_labels(events, min_pct=0.05):
 
     This function recursively eliminates rare observations.
 
-    :param events: (data frame) events
-    :param min_pct: (float) a fraction used to decide if the observation occurs less than
-    that fraction
-    :return: (data frame) of events
+    :param events: (data frame) events.
+    :param min_pct: (float) a fraction used to decide if the observation occurs less than that fraction.
+    :return: (data frame) of events.
     """
     # Apply weights, drop labels with insufficient examples
     while True:
