@@ -3,9 +3,14 @@ Logic regarding labeling from chapter 3. In particular the Triple Barrier Method
 """
 
 import numpy as np
+np.set_printoptions(suppress=True)  # don't use scientific notati
+import time
 import pandas as pd
 import sys
+import os
+from itertools import chain
 from pathlib import Path
+
 from numba import njit, prange
 
 home = str(Path.home())
@@ -13,6 +18,50 @@ sys.path.append(home + "/ProdigyAI/third_party_libraries/hudson_and_thames")
 
 # Snippet 3.1, page 44, Daily Volatility Estimates
 from mlfinlab.util.multiprocess import mp_pandas_obj
+
+
+@njit  # prange i loop ?
+def get_events_subloop_numba(events_t1_index_as_epoch, close_np_array,
+                             close_index_as_epoch, out_epoch_index,
+                             side_np_array, stop_loss_np_array,
+                             profit_taking_np_array, out_sl, out_pt):
+    for i in range(len(events_t1_index_as_epoch)):
+        path_prices_for_given_trade = np.zeros(len(close_np_array))
+        path_prices_for_given_trade[:] = np.nan
+        path_prices_for_given_trade_index = np.zeros(len(close_np_array))
+        path_prices_for_given_trade_index[:] = np.nan
+        for j in range(len(close_index_as_epoch)):
+
+            if close_index_as_epoch[j] >= events_t1_index_as_epoch[
+                    i] and close_index_as_epoch[j] <= events_t1_as_epoch[i]:
+                path_prices_for_given_trade_index[j] = close_index_as_epoch[j]
+                path_prices_for_given_trade[j] = close_np_array[j]
+
+            if close_index_as_epoch[j] == events_t1_index_as_epoch[i]:
+                loc_index_in_epoch = j
+
+        path_prices_for_given_trade_index = path_prices_for_given_trade_index[
+            ~np.isnan(path_prices_for_given_trade_index)]
+        path_prices_for_given_trade = path_prices_for_given_trade[
+            ~np.isnan(path_prices_for_given_trade)]
+
+        cum_returns = (
+            path_prices_for_given_trade / close_np_array[loc_index_in_epoch] -
+            1) * side_np_array[i]  # Path returns
+
+        for k in range(len(out_epoch_index)):
+            if out_epoch_index[k] == events_t1_index_as_epoch[i]:
+                out_loc = k
+
+        for l in range(len(cum_returns)):
+            if cum_returns[l] < stop_loss_np_array[out_loc]:
+                out_sl[out_loc] = path_prices_for_given_trade_index[l]
+                break
+            if cum_returns[l] > profit_taking_np_array[out_loc]:
+                out_pt[out_loc] = path_prices_for_given_trade_index[l]
+                break
+
+    return out_sl, out_pt
 
 
 # Snippet 3.2, page 45, Triple Barrier Labeling Method
@@ -36,6 +85,7 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
 
     events_ = events.loc[molecule]
     out = events_[["t1"]].copy(deep=True)
+    numba_out = events_[["t1"]].copy(deep=True)
 
     profit_taking_multiple = pt_sl[0]
     stop_loss_multiple = pt_sl[1]
@@ -52,30 +102,79 @@ def apply_pt_sl_on_t1(close, events, pt_sl, molecule):  # pragma: no cover
     else:
         stop_loss = pd.Series(index=events.index)  # NaNs
 
-    # Get events
-    for loc, vertical_barrier in events_["t1"].fillna(close.index[-1]).iteritems():
-        closing_prices = close[loc:vertical_barrier]  # Path prices for a given trade
-        cum_returns = (closing_prices / close[loc] - 1) * events_.at[
-            loc, "side"
-        ]  # Path returns
-        out.loc[loc, "sl"] = cum_returns[
-            cum_returns < stop_loss[loc]
-        ].index.min()  # Earliest stop loss date
-        out.loc[loc, "pt"] = cum_returns[
-            cum_returns > profit_taking[loc]
-        ].index.min()  # Earliest profit taking date
+    # print("starting sub loop prep")
 
-    # out["t1"] = out["t1"].dt.round("ms")
-    # out["pt"] = out["pt"].dt.round("ms")
-    # out["pt"] = out["sl"].dt.round("ms")
+    start_time = time.time()
 
-    return out
+    out_epoch_index = np.asarray(out.index.astype(np.int64)) // 1000000
+
+    stop_loss_np_array = np.asarray(stop_loss)
+    profit_taking_np_array = np.asarray(profit_taking)
+
+    out_sl = np.zeros(len(out_epoch_index))
+    out_sl[:] = np.nan
+    out_pt = np.zeros(len(out_epoch_index))
+    out_pt[:] = np.nan
+
+    events_t1_fill_na_with_last_close_index = events_["t1"].fillna(
+        close.index[-1])
+
+    events_side_fill_na_with_last_close_index = events_["side"].fillna(
+        close.index[-1])
+
+    side_np_array = np.asarray(events_side_fill_na_with_last_close_index)
+
+    events_t1_index_as_epoch = np.asarray(
+        events_t1_fill_na_with_last_close_index.index.astype(
+            np.int64)) // 1000000
+    events_t1_as_epoch = np.asarray(
+        events_t1_fill_na_with_last_close_index.astype(np.int64)) // 1000000
+
+    close_index_as_epoch = np.asarray(close.index.astype(np.int64)) // 1000000
+    close_np_array = np.asarray(close)
+
+    # print("finished sub loop prep")
+
+    # print("starting subloop in apply_pt_sl")
+
+    out_sl, out_pt = get_events_subloop_numba(
+        events_t1_index_as_epoch, close_np_array, close_index_as_epoch,
+        out_epoch_index, side_np_array, stop_loss_np_array,
+        profit_taking_np_array, out_sl, out_pt)
+
+    numba_out["sl"] = pd.to_datetime(out_sl, unit="ms")
+    numba_out["pt"] = pd.to_datetime(out_pt, unit="ms")
+
+    # Get events original code
+    # for loc, vertical_barrier in events_["t1"].fillna(
+    #         close.index[-1]).iteritems():
+    #     closing_prices = close[
+    #         loc:vertical_barrier]  # Path prices for a given trade
+
+    #     cum_returns = (closing_prices / close[loc] -
+    #                    1) * events_.at[loc, "side"]  # Path returns-
+    #     out.loc[loc,
+    #             "sl"] = cum_returns[cum_returns < stop_loss[loc]].index.min(
+    #             )  # Earliest stop loss date
+    #     out.loc[loc, "pt"] = cum_returns[
+    #         cum_returns > profit_taking[loc]].index.min(
+    #         )  # Earliest profit taking date
+
+    end_time = time.time()
+
+    print("finished subloop in apply_pt_sl" + str(end_time - start_time))
+
+
+    return numba_out
 
 
 # Snippet 3.4 page 49, Adding a Vertical Barrier
-def add_vertical_barrier(
-    t_events, close, num_days=0, num_hours=0, num_minutes=0, num_seconds=0
-):
+def add_vertical_barrier(t_events,
+                         close,
+                         num_days=0,
+                         num_hours=0,
+                         num_minutes=0,
+                         num_seconds=0):
     """
     Snippet 3.4 page 49, Adding a Vertical Barrier
 
@@ -94,9 +193,7 @@ def add_vertical_barrier(
     """
     timedelta = pd.Timedelta(
         "{} days, {} hours, {} minutes, {} seconds".format(
-            num_days, num_hours, num_minutes, num_seconds
-        )
-    )
+            num_days, num_hours, num_minutes, num_seconds))
     # Find index to closest to vertical barrier
     nearest_index = close.index.searchsorted(t_events + timedelta)
 
@@ -105,23 +202,23 @@ def add_vertical_barrier(
 
     # Find price index closest to vertical barrier time stamp
     nearest_timestamp = close.index[nearest_index]
-    filtered_events = t_events[: nearest_index.shape[0]]
+    filtered_events = t_events[:nearest_index.shape[0]]
 
-    vertical_barriers = pd.Series(data=nearest_timestamp, index=filtered_events)
+    vertical_barriers = pd.Series(data=nearest_timestamp,
+                                  index=filtered_events)
     return vertical_barriers
 
 
 # Snippet 3.3 -> 3.6 page 50, Getting the Time of the First Touch, with Meta Labels
-def get_events(
-    close,
-    t_events,
-    pt_sl,
-    target,
-    min_ret,
-    num_threads,
-    vertical_barrier_times=False,
-    side_prediction=None,
-):
+def get_events(close,
+               t_events,
+               pt_sl,
+               target,
+               min_ret,
+               num_threads,
+               vertical_barrier_times=False,
+               side_prediction=None,
+               split_by=10000):
     """
     Snippet 3.6 page 50, Getting the Time of the First Touch, with Meta Labels
 
@@ -164,47 +261,103 @@ def get_events(
         pt_sl_ = [pt_sl[0], pt_sl[0]]
     else:
         side_ = side_prediction.loc[
-            target.index
-        ]  # Subset side_prediction on target index.
+            target.index]  # Subset side_prediction on target index.
         pt_sl_ = pt_sl[:2]
 
     # Create a new df with [v_barrier, target, side] and drop rows that are NA in target
     events = pd.concat(
-        {"t1": vertical_barrier_times, "trgt": target, "side": side_}, axis=1
-    )
+        {
+            "t1": vertical_barrier_times,
+            "trgt": target,
+            "side": side_
+        }, axis=1)
     events = events.dropna(subset=["trgt"])
 
-    # Apply Triple Barrier
-    first_touch_dates = mp_pandas_obj(
-        func=apply_pt_sl_on_t1,
-        pd_obj=("molecule", events.index),
-        num_threads=num_threads,
-        close=close,
-        events=events,
-        pt_sl=pt_sl_,
-    )
+    print("apply_pt_sl_on_t1 loop started")
+
+    start_time = time.time()
+
+    first_touch_dates_list = []
+    padding = (len(close) - len(events)) * 2
+
+    number_of_splits = len(events.index) // split_by
+    for i in range(number_of_splits):
+        if i == 0:
+            print("split_nuber started " + str(i))
+
+            events_sub_index = events.index[:(i + 1) * split_by]
+            events_sub = events.loc[events_sub_index]
+            close_sub = close.iloc[:((i + 1) * split_by) + (padding * 2)]
+
+        elif i < number_of_splits - 1:
+            print("split_nuber started " + str(i))
+            events_sub_index = events.index[i * split_by:(i + 1) * split_by]
+            events_sub = events.loc[events_sub_index]
+            close_sub = close.iloc[(i * split_by) -
+                                   (padding * 2):((i + 1) * split_by) +
+                                   (padding * 2)]
+
+        elif i == number_of_splits - 1:
+            print("last")
+            print("split_nuber started " + str(i))
+            events_sub_index = events.index[i * split_by:]
+            events_sub = events.loc[events_sub_index]
+            close_sub = close.iloc[(i * split_by) - (padding * 2):]
+
+        # Apply Triple Barrier
+        first_touch_dates = mp_pandas_obj(
+            func=apply_pt_sl_on_t1,
+            pd_obj=("molecule", events_sub_index),
+            num_threads=num_threads,
+            close=close_sub,
+            events=events_sub,
+            pt_sl=pt_sl_,
+        )
+
+        first_touch_dates_list.append(first_touch_dates)
+
+        print("split_nuber finished " + str(i))
+
+    end_time = time.time()
+
+    print("apply_pt_sl_on_t1 loop finished " + str(end_time - start_time))
+
+    start_time = time.time()
+    first_touch_dates = pd.concat(first_touch_dates_list)
+
+    end_time = time.time()
+
+    print("pd concat time " + str(end_time - start_time))
+
+    print("apply_pt_sl_on_t1 finished")
+
+    print("fill_events_t1_with_first_touches pre work started")
+    start_time = time.time()
 
     events_index_as_epoch = np.asarray(events.index.astype(np.int64))
     events_t1 = events.reindex(events.t1)
     events_t1_as_epoch = np.asarray(events_t1.index.astype(np.int64))
 
     first_touch_dates_index_as_epoch = np.asarray(
-        first_touch_dates.index.astype(np.int64)
-    )
+        first_touch_dates.index.astype(np.int64))
     first_touch_dates_t1 = first_touch_dates.reindex(first_touch_dates.t1)
     first_touch_dates_t1_as_epoch = np.asarray(
-        first_touch_dates_t1.index.astype(np.int64)
-    )
+        first_touch_dates_t1.index.astype(np.int64))
 
     first_touch_dates_pt = first_touch_dates.reindex(first_touch_dates.pt)
     first_touch_dates_pt_as_epoch = np.asarray(
-        first_touch_dates_pt.index.astype(np.int64)
-    )
+        first_touch_dates_pt.index.astype(np.int64))
 
     first_touch_dates_sl = first_touch_dates.reindex(first_touch_dates.sl)
     first_touch_dates_sl_as_epoch = np.asarray(
-        first_touch_dates_sl.index.astype(np.int64)
-    )
+        first_touch_dates_sl.index.astype(np.int64))
+
+    end_time = time.time()
+    print("fill_events_t1_with_first_touches pre work finished" +
+          str(end_time - start_time))
+
+    print("fill_events_t1_with_first_touches numba started")
+    start_time = time.time()
 
     events_t1_epoch_from_first_touch_dates = fill_events_t1_with_first_touches(
         events_index_as_epoch,
@@ -214,6 +367,13 @@ def get_events(
         first_touch_dates_pt_as_epoch,
         first_touch_dates_sl_as_epoch,
     )
+
+    end_time = time.time()
+    print("fill_events_t1_with_first_touches numba finished" +
+          str(end_time - start_time))
+
+    import pdb
+    pdb.set_trace()
 
     # for ind in events.index:
     #     # find the index  where index == ind then update t1
@@ -244,48 +404,38 @@ def fill_events_t1_with_first_touches(
         for j in prange(len(first_touch_dates_index_as_epoch)):
             if events_index_as_epoch[i] >= first_touch_dates_index_as_epoch[j]:
 
-                if (
-                    first_touch_dates_pt_as_epoch[j] < 0
-                    and first_touch_dates_sl_as_epoch[j] < 0
-                ):
+                if (first_touch_dates_pt_as_epoch[j] < 0
+                        and first_touch_dates_sl_as_epoch[j] < 0):
                     events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[j]
-                elif (
-                    first_touch_dates_pt_as_epoch[j] > 0
-                    and first_touch_dates_sl_as_epoch[j] > 0
-                ):
-                    if (
-                        first_touch_dates_pt_as_epoch[j]
-                        < first_touch_dates_sl_as_epoch[j]
-                    ):
-                        events_t1_as_epoch[i] = first_touch_dates_pt_as_epoch[j]
-                    elif (
-                        first_touch_dates_pt_as_epoch[j]
-                        > first_touch_dates_sl_as_epoch[j]
-                    ):
-                        events_t1_as_epoch[i] = first_touch_dates_sl_as_epoch[j]
+                elif (first_touch_dates_pt_as_epoch[j] > 0
+                      and first_touch_dates_sl_as_epoch[j] > 0):
+                    if (first_touch_dates_pt_as_epoch[j] <
+                            first_touch_dates_sl_as_epoch[j]):
+                        events_t1_as_epoch[i] = first_touch_dates_pt_as_epoch[
+                            j]
+                    elif (first_touch_dates_pt_as_epoch[j] >
+                          first_touch_dates_sl_as_epoch[j]):
+                        events_t1_as_epoch[i] = first_touch_dates_sl_as_epoch[
+                            j]
 
-                elif (
-                    first_touch_dates_pt_as_epoch[j] < 0
-                    and first_touch_dates_sl_as_epoch[j] > 0
-                ):
-                    if (
-                        first_touch_dates_sl_as_epoch[j]
-                        < first_touch_dates_t1_as_epoch[j]
-                    ):
-                        events_t1_as_epoch[i] = first_touch_dates_sl_as_epoch[j]
+                elif (first_touch_dates_pt_as_epoch[j] < 0
+                      and first_touch_dates_sl_as_epoch[j] > 0):
+                    if (first_touch_dates_sl_as_epoch[j] <
+                            first_touch_dates_t1_as_epoch[j]):
+                        events_t1_as_epoch[i] = first_touch_dates_sl_as_epoch[
+                            j]
                     else:
-                        events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[j]
-                elif (
-                    first_touch_dates_pt_as_epoch[j] > 0
-                    and first_touch_dates_sl_as_epoch[j] < 0
-                ):
-                    if (
-                        first_touch_dates_pt_as_epoch[j]
-                        < first_touch_dates_t1_as_epoch[j]
-                    ):
-                        events_t1_as_epoch[i] = first_touch_dates_pt_as_epoch[j]
+                        events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[
+                            j]
+                elif (first_touch_dates_pt_as_epoch[j] > 0
+                      and first_touch_dates_sl_as_epoch[j] < 0):
+                    if (first_touch_dates_pt_as_epoch[j] <
+                            first_touch_dates_t1_as_epoch[j]):
+                        events_t1_as_epoch[i] = first_touch_dates_pt_as_epoch[
+                            j]
                     else:
-                        events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[j]
+                        events_t1_as_epoch[i] = first_touch_dates_t1_as_epoch[
+                            j]
 
     return events_t1_as_epoch
 
@@ -353,15 +503,15 @@ def get_bins(triple_barrier_events, close):
 
     # 1) Align prices with their respective events
     events_ = triple_barrier_events.dropna(subset=["t1"])
-    all_dates = events_.index.union(other=events_["t1"].array).drop_duplicates()
+    all_dates = events_.index.union(
+        other=events_["t1"].array).drop_duplicates()
     prices = close.reindex(all_dates, method="bfill")
 
     # 2) Create out DataFrame
     out_df = pd.DataFrame(index=events_.index)
     # Need to take the log returns, else your results will be skewed for short positions
     out_df["ret"] = np.log(prices.loc[events_["t1"].array].array) - np.log(
-        prices.loc[events_.index]
-    )
+        prices.loc[events_.index])
     out_df["trgt"] = events_["trgt"]
 
     # Meta labeling: Events that were correct will have pos returns
