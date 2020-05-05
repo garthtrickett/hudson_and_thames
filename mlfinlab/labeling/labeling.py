@@ -331,49 +331,79 @@ def get_events(close,
 
     print("apply_pt_sl_on_t1 finished")
 
-    print("fill_events_t1_with_first_touches pre work started")
-    start_time = time.time()
+    events_t1_epoch_from_first_touch_dates_list = []
+    padding = (len(close) - len(events)) * 2
 
-    events_index_as_epoch = np.asarray(events.index.astype(np.int64))
-    events_t1 = events.reindex(events.t1)
-    events_t1_as_epoch = np.asarray(events_t1.index.astype(np.int64))
+    number_of_splits = len(events.index) // split_by
+    for i in range(number_of_splits):
+        if i == 0:
+            start_index = None  # 0
+            end_index = (i + 1) * split_by
+        elif i < number_of_splits - 1:
+            start_index = i * split_by
+            end_index = (i + 1) * split_by
+        elif i == number_of_splits - 1:
+            start_index = i * split_by
+            end_index = None  # -1
 
-    first_touch_dates_index_as_epoch = np.asarray(
-        first_touch_dates.index.astype(np.int64))
-    first_touch_dates_t1 = first_touch_dates.reindex(first_touch_dates.t1)
-    first_touch_dates_t1_as_epoch = np.asarray(
-        first_touch_dates_t1.index.astype(np.int64))
+        print("fill_events_t1_with_first_touches pre work started")
+        start_time = time.time()
 
-    first_touch_dates_pt = first_touch_dates.reindex(first_touch_dates.pt)
-    first_touch_dates_pt_as_epoch = np.asarray(
-        first_touch_dates_pt.index.astype(np.int64))
+        events_index_as_epoch = np.asarray(
+            events.index[start_index:end_index].astype(np.int64))
+        events_t1 = events.reindex(events.t1)
+        events_t1_as_epoch = np.asarray(
+            events_t1.index[start_index:end_index].astype(np.int64))
 
-    first_touch_dates_sl = first_touch_dates.reindex(first_touch_dates.sl)
-    first_touch_dates_sl_as_epoch = np.asarray(
-        first_touch_dates_sl.index.astype(np.int64))
+        first_touch_dates_index_as_epoch = np.asarray(
+            first_touch_dates.index[start_index:end_index].astype(np.int64))
+        first_touch_dates_t1 = first_touch_dates.reindex(first_touch_dates.t1)
+        first_touch_dates_t1_as_epoch = np.asarray(
+            first_touch_dates_t1.index[start_index:end_index].astype(np.int64))
 
-    end_time = time.time()
-    print("fill_events_t1_with_first_touches pre work finished" +
-          str(end_time - start_time))
+        first_touch_dates_pt = first_touch_dates.reindex(first_touch_dates.pt)
+        first_touch_dates_pt_as_epoch = np.asarray(
+            first_touch_dates_pt.index[start_index:end_index].astype(np.int64))
 
-    print("fill_events_t1_with_first_touches numba started")
-    start_time = time.time()
+        first_touch_dates_sl = first_touch_dates.reindex(first_touch_dates.sl)
+        first_touch_dates_sl_as_epoch = np.asarray(
+            first_touch_dates_sl.index[start_index:end_index].astype(np.int64))
 
-    events_t1_epoch_from_first_touch_dates = fill_events_t1_with_first_touches(
-        events_index_as_epoch,
-        first_touch_dates_index_as_epoch,
-        events_t1_as_epoch,
-        first_touch_dates_t1_as_epoch,
-        first_touch_dates_pt_as_epoch,
-        first_touch_dates_sl_as_epoch,
-    )
+        end_time = time.time()
+        print("fill_events_t1_with_first_touches pre work finished" +
+              str(end_time - start_time))
 
-    end_time = time.time()
-    print("fill_events_t1_with_first_touches numba finished" +
-          str(end_time - start_time))
+        print("fill_events_t1_with_first_touches numba started")
+        start_time = time.time()
 
-    # import pdb
-    # pdb.set_trace()
+        events_t1_epoch_from_first_touch_dates = fill_events_t1_with_first_touches(
+            events_index_as_epoch,
+            first_touch_dates_index_as_epoch,
+            events_t1_as_epoch,
+            first_touch_dates_t1_as_epoch,
+            first_touch_dates_pt_as_epoch,
+            first_touch_dates_sl_as_epoch,
+        )
+
+        events_t1_epoch_from_first_touch_dates_list.append(
+            events_t1_epoch_from_first_touch_dates)
+
+        end_time = time.time()
+        print("fill_events_t1_with_first_touches numba finished" +
+              str(end_time - start_time))
+
+    print(len(events_t1_epoch_from_first_touch_dates_list))
+
+    for i in range(len(events_t1_epoch_from_first_touch_dates_list)):
+        print(i)
+        if i == 0:
+            appended_events_t1_epoch_from_first_touch_dates = np.append(
+                events_t1_epoch_from_first_touch_dates_list[0],
+                events_t1_epoch_from_first_touch_dates_list[1])
+        elif i < len(events_t1_epoch_from_first_touch_dates_list) - 1:
+            appended_events_t1_epoch_from_first_touch_dates = np.append(
+                appended_events_t1_epoch_from_first_touch_dates,
+                events_t1_epoch_from_first_touch_dates_list[i + 1])
 
     # for ind in events.index:
     #     # find the index  where index == ind then update t1
@@ -386,7 +416,7 @@ def get_events(close,
     events["pt"] = pt_sl[0]
     events["sl"] = pt_sl[1]
 
-    events.t1 = pd.to_datetime(events_t1_epoch_from_first_touch_dates)
+    events.t1 = pd.to_datetime(appended_events_t1_epoch_from_first_touch_dates)
 
     return events
 
@@ -440,6 +470,39 @@ def fill_events_t1_with_first_touches(
     return events_t1_as_epoch
 
 
+@njit(parallel=True)
+def barrier_touched_numba(out_df_ret_as_array, out_df_trgt_as_array,
+                          events_pt_as_array, events_sl_as_array):
+    store = np.zeros(len(out_df_ret_as_array))
+
+    for i in prange(len(out_df_ret_as_array)):
+        ret = out_df_ret_as_array[i]
+        target = out_df_trgt_as_array[i]
+
+        pt_level_reached = ret > np.log(1 + target) * events_pt_as_array[i]
+        sl_level_reached = ret < -np.log(1 + target) * events_sl_as_array[i]
+
+        # for date_time, values in out_df.iterrows():
+        #     ret = values["ret"]
+        #     target = values["trgt"]
+
+        #     pt_level_reached = ret > np.log(1 + target) * events.loc[date_time,
+        #                                                              'pt']
+        #     sl_level_reached = ret < -np.log(1 + target) * events.loc[date_time,
+        #                                                               'sl']
+        if ret > 0.0 and pt_level_reached:
+            # Top barrier reached
+            store[i] = 1
+        elif ret < 0.0 and sl_level_reached:
+            # Bottom barrier reached
+            store[i] = -1
+        else:
+            # Vertical barrier reached
+            store[i] = 0
+
+    return store
+
+
 # Snippet 3.9, pg 55, Question 3.3
 def barrier_touched(out_df, events):
     """
@@ -454,25 +517,14 @@ def barrier_touched(out_df, events):
     :param events: (DataFrame) The original events data frame. Contains the pt sl multiples needed here.
     :return: (DataFrame) containing returns, target, and labels
     """
-    store = []
-    for date_time, values in out_df.iterrows():
-        ret = values["ret"]
-        target = values["trgt"]
 
-        pt_level_reached = ret > np.log(1 + target) * events.loc[date_time,
-                                                                 'pt']
-        sl_level_reached = ret < -np.log(1 + target) * events.loc[date_time,
-                                                                  'sl']
+    out_df_ret_as_array = out_df.ret.values
+    out_df_trgt_as_array = out_df.trgt.values
+    events_pt_as_array = events.pt.values
+    events_sl_as_array = events.sl.values
 
-        if ret > 0.0 and pt_level_reached:
-            # Top barrier reached
-            store.append(1)
-        elif ret < 0.0 and sl_level_reached:
-            # Bottom barrier reached
-            store.append(-1)
-        else:
-            # Vertical barrier reached
-            store.append(0)
+    store = barrier_touched_numba(out_df_ret_as_array, out_df_trgt_as_array,
+                                  events_pt_as_array, events_sl_as_array)
 
     # Save to 'bin' column and return
     out_df["bin"] = store
@@ -503,6 +555,9 @@ def get_bins(triple_barrier_events, close):
     :return: (data frame) of meta-labeled events
     """
 
+    import time
+    start_time = time.time()
+
     # 1) Align prices with their respective events
     events_ = triple_barrier_events.dropna(subset=["t1"])
     all_dates = events_.index.union(
@@ -520,8 +575,18 @@ def get_bins(triple_barrier_events, close):
     if "side" in events_:
         out_df["ret"] = out_df["ret"] * events_["side"]  # meta-labeling
 
+    end_time = time.time()
+
+    print("p1=" + str(end_time - start_time))
+
     # Added code: label 0 when vertical barrier reached
     out_df = barrier_touched(out_df, triple_barrier_events)
+
+    end_time = time.time()
+
+    print("p2=" + str(end_time - start_time))
+
+    start_time = time.time()
 
     # Meta labeling: label incorrect events with a 0
     if "side" in events_:
@@ -534,6 +599,10 @@ def get_bins(triple_barrier_events, close):
     tb_cols = triple_barrier_events.columns
     if "side" in tb_cols:
         out_df["side"] = triple_barrier_events["side"]
+
+    end_time = time.time()
+
+    print("p3=" + str(end_time - start_time))
 
     return out_df
 
