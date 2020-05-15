@@ -210,15 +210,15 @@ def add_vertical_barrier(t_events,
 
 
 # Snippet 3.3 -> 3.6 page 50, Getting the Time of the First Touch, with Meta Labels
-def get_events(close,
-               t_events,
-               pt_sl,
-               target,
-               min_ret,
-               num_threads,
-               vertical_barrier_times=False,
-               side_prediction=None,
-               split_by=10000):
+def get_first_touch_dates(close,
+                          t_events,
+                          pt_sl,
+                          target,
+                          min_ret,
+                          num_threads,
+                          vertical_barrier_times=False,
+                          side_prediction=None,
+                          split_by=10000):
     """
     Snippet 3.6 page 50, Getting the Time of the First Touch, with Meta Labels
 
@@ -325,15 +325,19 @@ def get_events(close,
     start_time = time.time()
     first_touch_dates = pd.concat(first_touch_dates_list)
 
-    end_time = time.time()
-
     print("pd concat time " + str(end_time - start_time))
 
     print("apply_pt_sl_on_t1 finished")
 
+    return first_touch_dates, events, close, side_prediction, pt_sl
+
+
+def get_events_from_first_touch_dates(first_touch_dates, events, close,
+                                      split_by, side_prediction, pt_sl):
+    end_time = time.time()
+
     events_t1_epoch_from_first_touch_dates_list = []
     padding = (len(close) - len(events)) * 2
-
     number_of_splits = len(events.index) // split_by
     for i in range(number_of_splits):
         if i == 0:
@@ -373,7 +377,7 @@ def get_events(close,
         print("fill_events_t1_with_first_touches pre work finished" +
               str(end_time - start_time))
 
-        print("fill_events_t1_with_first_touches numba started")
+        print("fill_events_t1_with_first_touches numba started" + str(i))
         start_time = time.time()
 
         events_t1_epoch_from_first_touch_dates = fill_events_t1_with_first_touches(
@@ -389,10 +393,15 @@ def get_events(close,
             events_t1_epoch_from_first_touch_dates)
 
         end_time = time.time()
-        print("fill_events_t1_with_first_touches numba finished" +
-              str(end_time - start_time))
+        print(
+            "fill_events_t1_with_first_touches numba finished split number=" +
+            str(i) + "__" + str(end_time - start_time))
 
     print(len(events_t1_epoch_from_first_touch_dates_list))
+
+    print(
+        "joining numpy arrays in events_t1_epoch_from_first_touch_dates_list started"
+    )
 
     for i in range(len(events_t1_epoch_from_first_touch_dates_list)):
         print(i)
@@ -404,6 +413,10 @@ def get_events(close,
             appended_events_t1_epoch_from_first_touch_dates = np.append(
                 appended_events_t1_epoch_from_first_touch_dates,
                 events_t1_epoch_from_first_touch_dates_list[i + 1])
+
+    print(
+        "joining numpy arrays in events_t1_epoch_from_first_touch_dates_list finished"
+    )
 
     # for ind in events.index:
     #     # find the index  where index == ind then update t1
