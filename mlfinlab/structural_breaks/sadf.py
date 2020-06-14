@@ -5,12 +5,17 @@ Explosiveness tests: SADF
 from typing import Union, Tuple
 import pandas as pd
 import numpy as np
+from numpy.linalg import LinAlgError
 from mlfinlab.util.multiprocess import mp_pandas_obj
 
+import numba
+from numba import jit, njit, prange
 
 # pylint: disable=invalid-name
 
-def _get_sadf_at_t(X: pd.DataFrame, y: pd.DataFrame, min_length: int, model: str, phi: float) -> float:
+
+def _get_sadf_at_t(X: pd.DataFrame, y: pd.DataFrame, min_length: int,
+                   model: str, phi: float) -> float:
     """
     Advances in Financial Machine Learning, Snippet 17.2, page 258.
 
@@ -28,7 +33,7 @@ def _get_sadf_at_t(X: pd.DataFrame, y: pd.DataFrame, min_length: int, model: str
         y_, X_ = y[start:], X[start:]
         b_mean_, b_std_ = get_betas(X_, y_)
         if not np.isnan(b_mean_[0]):
-            b_mean_, b_std_ = b_mean_[0, 0], b_std_[0, 0] ** 0.5
+            b_mean_, b_std_ = b_mean_[0, 0], b_std_[0, 0]**0.5
             all_adf = b_mean_ / b_std_
             if model[:2] == 'sm':
                 all_adf = np.abs(all_adf) / (y.shape[0]**phi)
@@ -60,25 +65,28 @@ def _get_y_x(series: pd.Series, model: str, lags: Union[int, list],
         x['const'] = 1
 
     if model == 'linear':
-        x['trend'] = np.arange(x.shape[0])  # Add t to the model (0, 1, 2, 3, 4, 5, .... t)
+        x['trend'] = np.arange(
+            x.shape[0])  # Add t to the model (0, 1, 2, 3, 4, 5, .... t)
         beta_column = 'y_lagged'  # Column which is used to estimate test beta statistics
     elif model == 'quadratic':
-        x['trend'] = np.arange(x.shape[0]) # Add t to the model (0, 1, 2, 3, 4, 5, .... t)
-        x['quad_trend'] = np.arange(x.shape[0]) ** 2 # Add t^2 to the model (0, 1, 4, 9, ....)
+        x['trend'] = np.arange(
+            x.shape[0])  # Add t to the model (0, 1, 2, 3, 4, 5, .... t)
+        x['quad_trend'] = np.arange(
+            x.shape[0])**2  # Add t^2 to the model (0, 1, 4, 9, ....)
         beta_column = 'y_lagged'  # Column which is used to estimate test beta statistics
     elif model == 'sm_poly_1':
         y = series.loc[y.index]
         x = pd.DataFrame(index=y.index)
         x['const'] = 1
         x['trend'] = np.arange(x.shape[0])
-        x['quad_trend'] = np.arange(x.shape[0]) ** 2
+        x['quad_trend'] = np.arange(x.shape[0])**2
         beta_column = 'quad_trend'
     elif model == 'sm_poly_2':
         y = np.log(series.loc[y.index])
         x = pd.DataFrame(index=y.index)
         x['const'] = 1
         x['trend'] = np.arange(x.shape[0])
-        x['quad_trend'] = np.arange(x.shape[0]) ** 2
+        x['quad_trend'] = np.arange(x.shape[0])**2
         beta_column = 'quad_trend'
     elif model == 'sm_exp':
         y = np.log(series.loc[y.index])
@@ -125,6 +133,7 @@ def _lag_df(df: pd.DataFrame, lags: Union[int, list]) -> pd.DataFrame:
     return df_lagged
 
 
+@njit
 def get_betas(X: pd.DataFrame, y: pd.DataFrame) -> Tuple[np.array, np.array]:
     """
     Advances in Financial Machine Learning, Snippet 17.4, page 259.
@@ -140,8 +149,14 @@ def get_betas(X: pd.DataFrame, y: pd.DataFrame) -> Tuple[np.array, np.array]:
 
     try:
         xx_inv = np.linalg.inv(xx)
-    except np.linalg.LinAlgError:
-        return [np.nan], [[np.nan, np.nan]]
+    except:
+        return None
+    # except LinAlgError:
+    #     first_return = np.zeros(1)
+    #     first_return[:] = np.nan
+    #     second_return = np.zeros((1, 2))
+    #     second_return[:] = np.nan
+    #     return first_return, second_return
 
     b_mean = np.dot(xx_inv, xy)
     err = y - np.dot(X, b_mean)
@@ -150,8 +165,8 @@ def get_betas(X: pd.DataFrame, y: pd.DataFrame) -> Tuple[np.array, np.array]:
     return b_mean, b_var
 
 
-def _sadf_outer_loop(X: pd.DataFrame, y: pd.DataFrame, min_length: int, model: str, phi: float,
-                     molecule: list) -> pd.Series:
+def _sadf_outer_loop(X: pd.DataFrame, y: pd.DataFrame, min_length: int,
+                     model: str, phi: float, molecule: list) -> pd.Series:
     """
     This function gets SADF for t times from molecule
 
@@ -172,8 +187,13 @@ def _sadf_outer_loop(X: pd.DataFrame, y: pd.DataFrame, min_length: int, model: s
     return sadf_series
 
 
-def get_sadf(series: pd.Series, model: str, lags: Union[int, list], min_length: int, add_const: bool = False,
-             phi: float = 0, num_threads: int = 8) -> pd.Series:
+def get_sadf(series: pd.Series,
+             model: str,
+             lags: Union[int, list],
+             min_length: int,
+             add_const: bool = False,
+             phi: float = 0,
+             num_threads: int = 8) -> pd.Series:
     """
     Advances in Financial Machine Learning, p. 258-259.
 
@@ -201,13 +221,14 @@ def get_sadf(series: pd.Series, model: str, lags: Union[int, list], min_length: 
     X, y = _get_y_x(series, model, lags, add_const)
     molecule = y.index[min_length:y.shape[0]]
 
-    sadf_series = mp_pandas_obj(func=_sadf_outer_loop,
-                                pd_obj=('molecule', molecule),
-                                X=X,
-                                y=y,
-                                min_length=min_length,
-                                model=model,
-                                phi=phi,
-                                num_threads=num_threads,
-                                )
+    sadf_series = mp_pandas_obj(
+        func=_sadf_outer_loop,
+        pd_obj=('molecule', molecule),
+        X=X,
+        y=y,
+        min_length=min_length,
+        model=model,
+        phi=phi,
+        num_threads=num_threads,
+    )
     return sadf_series

@@ -8,9 +8,74 @@ import numpy as np
 
 from mlfinlab.structural_breaks.sadf import get_betas
 
+import numba
+from numba import njit, prange
 
-def trend_scanning_labels(price_series: pd.Series, t_events: list = None, look_forward_window: int = 20,
-                          min_sample_length: int = 5, step: int = 1) -> pd.DataFrame:
+import time
+
+
+# with this set to true 547.9137012958527
+@njit
+def get_labels_numba(price_series_np_array, t_events_np_array_epoch,
+                     look_forward_window, min_sample_length, step):
+    t1_array_numba = np.zeros(
+        len(t_events_np_array_epoch))  # Array of label end times
+    t1_array_numba[:] = np.nan
+    t_values_array_numba = np.zeros(
+        len(t_events_np_array_epoch))  # Array of trend t-values
+    t_values_array_numba[:] = np.nan
+    for i in prange(len(t_events_np_array_epoch)):
+        subset_np_array = price_series_np_array[i:i + look_forward_window]
+        subset_np_array_epoch = t_events_np_array_epoch[i:i +
+                                                        look_forward_window]
+        if len(subset_np_array) >= look_forward_window:
+            # Loop over possible look-ahead windows to get the one which yields maximum t values for b_1 regression coef
+            max_abs_t_value = -np.inf  # Maximum abs t-value of b_1 coefficient among l values
+            max_t_value_index = None  # Index with maximum t-value
+            max_t_value = None  # Maximum t-value signed
+
+            for forward_window in range(min_sample_length,
+                                        len(subset_np_array), step):
+                y_subset = subset_np_array[:forward_window].reshape(
+                    -1, 1)  # y{t}:y_{t+l}
+
+                y_subset_np_array_epoch = subset_np_array_epoch[:
+                                                                forward_window]
+
+                # Array of [1, 0], [1, 1], [1, 2], ... [1, l] # b_0, b_1 coefficients
+                X_subset = np.ones((y_subset.shape[0], 2))
+                X_subset[:, 1] = np.arange(y_subset.shape[0])
+
+                # Get regression coefficients estimates
+                # start = time.time()
+                b_mean_, b_std_ = get_betas(X_subset, y_subset)
+                # end = time.time()
+                # print("get_betas time")
+                # print(end - start)
+                # Check if l gives the maximum t-value among all values {0...L}
+                t_beta_1 = (b_mean_[1] / np.sqrt(b_std_[1, 1]))[0]
+                if abs(t_beta_1) > max_abs_t_value:
+                    max_abs_t_value = abs(t_beta_1)
+                    max_t_value = t_beta_1
+                    max_t_value_index = forward_window
+
+            label_endtime_index = y_subset_np_array_epoch[max_t_value_index -
+                                                          1]
+            # import pdb
+            # pdb.set_trace()
+            t1_array_numba[i] = label_endtime_index
+            t_values_array_numba[i] = max_t_value
+        else:
+            t1_array_numba[i] = np.nan
+            t_values_array_numba[i] = np.nan
+    return t1_array_numba, t_values_array_numba
+
+
+def trend_scanning_labels(price_series: pd.Series,
+                          t_events: list = None,
+                          look_forward_window: int = 20,
+                          min_sample_length: int = 5,
+                          step: int = 1) -> pd.DataFrame:
     """
     `Trend scanning <https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3257419>`_ is both a classification and
     regression labeling technique.
@@ -40,45 +105,36 @@ def trend_scanning_labels(price_series: pd.Series, t_events: list = None, look_f
     if t_events is None:
         t_events = price_series.index
 
-    t1_array = []  # Array of label end times
-    t_values_array = []  # Array of trend t-values
+    ### My numba version
 
-    for index in t_events:
-        subset = price_series.loc[index:].iloc[:look_forward_window]  # Take t:t+L window
-        if subset.shape[0] >= look_forward_window:
-            # Loop over possible look-ahead windows to get the one which yields maximum t values for b_1 regression coef
-            max_abs_t_value = -np.inf  # Maximum abs t-value of b_1 coefficient among l values
-            max_t_value_index = None  # Index with maximum t-value
-            max_t_value = None  # Maximum t-value signed
+    price_series_np_array = np.asarray(price_series)
+    t_events_np_array_epoch = np.asarray(t_events.astype(np.int64) // 1000000)
 
-            # Get optimal label end time value based on regression t-statistics
-            for forward_window in np.arange(min_sample_length, subset.shape[0], step):
-                y_subset = subset.iloc[:forward_window].values.reshape(-1, 1)  # y{t}:y_{t+l}
+    start = time.time()
+    t1_array_numba, t_values_array_numba = get_labels_numba(
+        price_series_np_array, t_events_np_array_epoch, look_forward_window,
+        min_sample_length, step)
+    end = time.time()
+    print("get_labels time")
+    print(end - start)
 
-                # Array of [1, 0], [1, 1], [1, 2], ... [1, l] # b_0, b_1 coefficients
-                X_subset = np.ones((y_subset.shape[0], 2))
-                X_subset[:, 1] = np.arange(y_subset.shape[0])
+    start = time.time()
+    t1_array_numba = pd.to_datetime(t1_array_numba, unit="ms")
 
-                # Get regression coefficients estimates
-                b_mean_, b_std_ = get_betas(X_subset, y_subset)
-                # Check if l gives the maximum t-value among all values {0...L}
-                t_beta_1 = (b_mean_[1] / np.sqrt(b_std_[1, 1]))[0]
-                if abs(t_beta_1) > max_abs_t_value:
-                    max_abs_t_value = abs(t_beta_1)
-                    max_t_value = t_beta_1
-                    max_t_value_index = forward_window
+    labels_numba = pd.DataFrame(
+        {
+            't1': t1_array_numba,
+            't_value': t_values_array_numba
+        },
+        index=t_events)
+    labels_numba = labels_numba.dropna()
+    labels_numba.loc[:, 'ret'] = price_series.loc[
+        labels_numba.t1].values / price_series.loc[
+            labels_numba.index].values - 1
 
-            # Store label information (t1, return)
-            label_endtime_index = subset.index[max_t_value_index - 1]
-            t1_array.append(label_endtime_index)
-            t_values_array.append(max_t_value)
 
-        else:
-            t1_array.append(None)
-            t_values_array.append(None)
+    end = time.time()
+    print("rest of script time")
+    print(end - start)
 
-    labels = pd.DataFrame({'t1': t1_array, 't_value': t_values_array}, index=t_events)
-    labels.loc[:, 'ret'] = price_series.loc[labels.t1].values / price_series.loc[labels.index].values - 1
-    labels['bin'] = np.sign(labels.t_value)
-
-    return labels
+    return labels_numba
